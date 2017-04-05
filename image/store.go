@@ -17,6 +17,7 @@ type Store interface {
 	Create(config []byte) (ID, error)
 	Get(id ID) (*Image, error)
 	Delete(id ID) ([]layer.Metadata, error)
+	DeletableLayers(id ID) ([]layer.Metadata, error)
 	Search(partialID string) (ID, error)
 	SetParent(id ID, parent ID) error
 	GetParent(id ID) (ID, error)
@@ -199,6 +200,46 @@ func (is *store) Get(id ID) (*Image, error) {
 	}
 
 	return img, nil
+}
+
+func (is *store) DeletableLayers(id ID) ([]layer.Metadata, error) {
+	is.Lock()
+	defer is.Unlock()
+
+	imageMeta := is.images[id]
+
+	if imageMeta == nil {
+		return  nil, fmt.Errorf("unrecognized image ID %s", id.String())
+	}
+
+	metadata := []layer.Metadata{}
+
+	l := imageMeta.layer
+	for {
+		if l == nil {
+			return metadata, nil
+		}
+		diffSize, err := l.DiffSize()
+		if err != nil {
+			return  nil, err
+		}
+
+		size, err := l.Size()
+		if err != nil {
+			return  nil, err
+		}
+
+		metadata = append(metadata, layer.Metadata{
+			ChainID: l.ChainID(),
+			DiffID: l.DiffID(),
+			DiffSize: diffSize,
+			Size: size,
+		})
+
+		l = l.Parent()
+	}
+
+	return metadata, nil
 }
 
 func (is *store) Delete(id ID) ([]layer.Metadata, error) {

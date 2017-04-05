@@ -30,21 +30,25 @@ var (
 		"label":  true,
 		"label!": true,
 		"until":  true,
+		"dryRun": true,
 	}
 	volumesAcceptedFilters = map[string]bool{
 		"label":  true,
 		"label!": true,
+		"dryRun": true,
 	}
 	imagesAcceptedFilters = map[string]bool{
 		"dangling": true,
 		"label":    true,
 		"label!":   true,
 		"until":    true,
+		"dryRun": true,
 	}
 	networksAcceptedFilters = map[string]bool{
 		"label":  true,
 		"label!": true,
 		"until":  true,
+		"dryRun": true,
 	}
 )
 
@@ -85,11 +89,16 @@ func (daemon *Daemon) ContainersPrune(ctx context.Context, pruneFilters filters.
 				continue
 			}
 			cSize, _ := daemon.getSize(c.ID)
-			// TODO: sets RmLink to true?
-			err := daemon.ContainerRm(c.ID, &types.ContainerRmConfig{})
-			if err != nil {
-				logrus.Warnf("failed to prune container %s: %v", c.ID, err)
-				continue
+
+			if isDryRun(pruneFilters) {
+				logrus.Debug("dry run of container prune")
+			} else {
+				// TODO: sets RmLink to true?
+				err := daemon.ContainerRm(c.ID, &types.ContainerRmConfig{})
+				if err != nil {
+					logrus.Warnf("failed to prune container %s: %v", c.ID, err)
+					continue
+				}
 			}
 			if cSize > 0 {
 				rep.SpaceReclaimed += uint64(cSize)
@@ -138,10 +147,14 @@ func (daemon *Daemon) VolumesPrune(ctx context.Context, pruneFilters filters.Arg
 			if err != nil {
 				logrus.Warnf("could not determine size of volume %s: %v", name, err)
 			}
-			err = daemon.volumes.Remove(v)
-			if err != nil {
-				logrus.Warnf("could not remove volume %s: %v", name, err)
-				return nil
+			if isDryRun(pruneFilters) {
+				logrus.Debug("dry run of volume prune")
+			} else {
+				err = daemon.volumes.Remove(v)
+				if err != nil {
+					logrus.Warnf("could not remove volume %s: %v", name, err)
+					return nil
+				}
 			}
 			rep.SpaceReclaimed += uint64(vSize)
 			rep.VolumesDeleted = append(rep.VolumesDeleted, name)
@@ -259,7 +272,13 @@ deleteImagesLoop:
 
 			if shouldDelete {
 				for _, ref := range refs {
-					imgDel, err := daemon.ImageDelete(ref.String(), false, true)
+					var imgDel []types.ImageDeleteResponseItem;
+					var err error;
+					if isDryRun(pruneFilters) {
+						imgDel, err = daemon.ImageDryPrune(ref.String(), false)
+					} else {
+						imgDel, err = daemon.ImageDelete(ref.String(), false, true)
+					}
 					if err != nil {
 						logrus.Warnf("could not delete reference %s: %v", ref.String(), err)
 						continue
@@ -268,7 +287,13 @@ deleteImagesLoop:
 				}
 			}
 		} else {
-			imgDel, err := daemon.ImageDelete(hex, false, true)
+			var imgDel []types.ImageDeleteResponseItem
+
+			if isDryRun(pruneFilters) {
+				imgDel, err = daemon.ImageDryPrune(hex, false)
+			} else {
+				imgDel, err = daemon.ImageDelete(hex, false, true)
+			}
 			if err != nil {
 				logrus.Warnf("could not delete image %s: %v", hex, err)
 				continue
@@ -279,8 +304,27 @@ deleteImagesLoop:
 		rep.ImagesDeleted = append(rep.ImagesDeleted, deletedImages...)
 	}
 
+	if isDryRun(pruneFilters){
+		// While running in dry run mode, the same imageId may be counted more than once - once for each tag
+		// and once for the occurrence of the image itself. Therefore, we need to de-duplicate the
+		// rep.ImagesDeleted response we get from the daemon.
+		rep.ImagesDeleted = deduplicate(rep.ImagesDeleted);
+	}
+
 	// Compute how much space was freed
-	for _, d := range rep.ImagesDeleted {
+	rep.SpaceReclaimed = computeSpaceReclaimed(rep.ImagesDeleted, allLayers)
+
+	if canceled {
+		logrus.Warnf("ImagesPrune operation cancelled: %#v", *rep)
+		return nil, ctx.Err()
+	}
+
+	return rep, nil
+}
+
+func computeSpaceReclaimed(imagesDeleted []types.ImageDeleteResponseItem, allLayers map[layer.ChainID]layer.Layer) uint64 {
+	var spaceReclaimed uint64 = 0;
+	for _, d := range imagesDeleted {
 		if d.Deleted != "" {
 			chid := layer.ChainID(d.Deleted)
 			if l, ok := allLayers[chid]; ok {
@@ -289,17 +333,26 @@ deleteImagesLoop:
 					logrus.Warnf("failed to get layer %s size: %v", chid, err)
 					continue
 				}
-				rep.SpaceReclaimed += uint64(diffSize)
+				spaceReclaimed += uint64(diffSize)
 			}
 		}
 	}
 
-	if canceled {
-		logrus.Warnf("ImagesPrune operation cancelled: %#v", *rep)
-		return nil, ctx.Err()
-	}
+	return spaceReclaimed;
+}
 
-	return rep, nil
+// deduplicate removes duplicate images from slice of prunedImages
+func deduplicate(prunedImages []types.ImageDeleteResponseItem) []types.ImageDeleteResponseItem {
+	var imagesSeen = make(map[types.ImageDeleteResponseItem]bool);
+	var deduped []types.ImageDeleteResponseItem;
+
+	for _, img := range prunedImages {
+		if _, seen := imagesSeen[img]; !seen {
+			imagesSeen[img] = true;
+			deduped = append(deduped, img);
+		}
+	}
+	return deduped
 }
 
 // localNetworksPrune removes unused local networks
@@ -331,9 +384,13 @@ func (daemon *Daemon) localNetworksPrune(ctx context.Context, pruneFilters filte
 		if len(nw.Endpoints()) > 0 {
 			return false
 		}
-		if err := daemon.DeleteNetwork(nw.ID()); err != nil {
-			logrus.Warnf("could not remove local network %s: %v", nwName, err)
-			return false
+		if isDryRun(pruneFilters) {
+			logrus.Debug("dry run of local network prune")
+		} else {
+			if err := daemon.DeleteNetwork(nw.ID()); err != nil {
+				logrus.Warnf("could not remove local network %s: %v", nwName, err)
+				return false
+			}
 		}
 		rep.NetworksDeleted = append(rep.NetworksDeleted, nwName)
 		return false
@@ -374,17 +431,21 @@ func (daemon *Daemon) clusterNetworksPrune(ctx context.Context, pruneFilters fil
 			if !matchLabels(pruneFilters, nw.Labels) {
 				continue
 			}
-			// https://github.com/docker/docker/issues/24186
-			// `docker network inspect` unfortunately displays ONLY those containers that are local to that node.
-			// So we try to remove it anyway and check the error
-			err = cluster.RemoveNetwork(nw.ID)
-			if err != nil {
-				// we can safely ignore the "network .. is in use" error
-				match := networkIsInUse.FindStringSubmatch(err.Error())
-				if len(match) != 2 || match[1] != nw.ID {
-					logrus.Warnf("could not remove cluster network %s: %v", nw.Name, err)
+			if isDryRun(pruneFilters) {
+				logrus.Debug("dry run of cluster network prune")
+			} else {
+				// https://github.com/docker/docker/issues/24186
+				// `docker network inspect` unfortunately displays ONLY those containers that are local to that node.
+				// So we try to remove it anyway and check the error
+				err = cluster.RemoveNetwork(nw.ID)
+				if err != nil {
+					// we can safely ignore the "network .. is in use" error
+					match := networkIsInUse.FindStringSubmatch(err.Error())
+					if len(match) != 2 || match[1] != nw.ID {
+						logrus.Warnf("could not remove cluster network %s: %v", nw.Name, err)
+					}
+					continue
 				}
-				continue
 			}
 			rep.NetworksDeleted = append(rep.NetworksDeleted, nw.Name)
 		}
@@ -460,4 +521,12 @@ func matchLabels(pruneFilters filters.Args, labels map[string]string) bool {
 		}
 	}
 	return true
+}
+
+func isDryRun(pruneFilters filters.Args) bool {
+	logrus.Debug(pruneFilters)
+	logrus.Debug(pruneFilters.Include("dryRun") &&
+		(pruneFilters.ExactMatch("dryRun", "true") || pruneFilters.ExactMatch("dryRun", "0")))
+	return pruneFilters.Include("dryRun") &&
+		(pruneFilters.ExactMatch("dryRun", "true") || pruneFilters.ExactMatch("dryRun", "0"))
 }

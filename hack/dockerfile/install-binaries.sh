@@ -58,7 +58,11 @@ install_dockercli() {
 	echo "Install docker/cli version $DOCKERCLI_COMMIT"
 	git clone "$DOCKERCLI_REPO" "$GOPATH/src/github.com/docker/cli"
 	cd "$GOPATH/src/github.com/docker/cli"
-	git checkout -q "$DOCKERCLI_COMMIT"
+
+    # Override cli installation to choose dry-run prune branch
+	# git checkout -q "$DOCKERCLI_COMMIT"
+	git checkout "30623-cli-dry-run-prune"
+
 	go build -o /usr/local/bin/docker github.com/docker/cli/cmd/docker
 }
 
