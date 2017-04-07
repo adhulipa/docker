@@ -151,7 +151,7 @@ func (daemon *Daemon) ImagesPrune(pruneFilters filters.Args) (*types.ImagesPrune
 
 			if shouldDelete {
 				for _, ref := range refs {
-					imgDel, err := daemon.ImageDelete(ref.String(), false, true)
+					imgDel, err := daemon.ImageDelete(ref.String(), false, true, isDryRun(pruneFilters))
 					if err != nil {
 						logrus.Warnf("could not delete reference %s: %v", ref.String(), err)
 						continue
@@ -160,7 +160,7 @@ func (daemon *Daemon) ImagesPrune(pruneFilters filters.Args) (*types.ImagesPrune
 				}
 			}
 		} else {
-			imgDel, err := daemon.ImageDelete(hex, false, true)
+			imgDel, err := daemon.ImageDelete(hex, false, true, isDryRun(pruneFilters))
 			if err != nil {
 				logrus.Warnf("could not delete image %s: %v", hex, err)
 				continue

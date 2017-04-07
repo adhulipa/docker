@@ -81,16 +81,22 @@ func runPrune(dockerCli *command.DockerCli, options pruneOptions) error {
 		}
 	}
 
-	spc, output, err := prune.RunImagePrune(dockerCli, options.all, options.filter)
+	spc, output, err := prune.RunImagePrune(dockerCli, options.all, options.dryRun, options.filter)
 	if err != nil {
 		return err
 	}
-	if spc > 0 {
+
+	// TODO: (cafed00d) when spc reported is 0, system prune will ot report anything
+	if spc >= 0 {
 		spaceReclaimed += spc
 		fmt.Fprintln(dockerCli.Out(), output)
 	}
 
-	fmt.Fprintln(dockerCli.Out(), "Total reclaimed space:", units.HumanSize(float64(spaceReclaimed)))
+	spaceMessage := "Total reclaimed space:"
+	if options.dryRun {
+		spaceMessage = "Estimated reclaimed space:"
+	}
+	fmt.Fprintln(dockerCli.Out(), spaceMessage, units.HumanSize(float64(spaceReclaimed)))
 
 	return nil
 }

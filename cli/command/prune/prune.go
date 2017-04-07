@@ -41,8 +41,8 @@ func RunVolumePrune(dockerCli *command.DockerCli, filter opts.FilterOpt) (uint64
 }
 
 // RunImagePrune executes a prune command for images
-func RunImagePrune(dockerCli *command.DockerCli, all bool, filter opts.FilterOpt) (uint64, string, error) {
-	return image.RunPrune(dockerCli, all, filter)
+func RunImagePrune(dockerCli *command.DockerCli, all bool, dryRun bool, filter opts.FilterOpt) (uint64, string, error) {
+	return image.RunPrune(dockerCli, all, dryRun, filter)
 }
 
 // RunNetworkPrune executes a prune command for networks

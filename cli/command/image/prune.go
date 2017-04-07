@@ -15,6 +15,7 @@ import (
 type pruneOptions struct {
 	force  bool
 	all    bool
+	dryRun bool
 	filter opts.FilterOpt
 }
 
@@ -43,6 +44,7 @@ func NewPruneCommand(dockerCli *command.DockerCli) *cobra.Command {
 	flags := cmd.Flags()
 	flags.BoolVarP(&opts.force, "force", "f", false, "Do not prompt for confirmation")
 	flags.BoolVarP(&opts.all, "all", "a", false, "Remove all unused images, not just dangling ones")
+	flags.BoolVarP(&opts.dryRun, "dry-run", "n", false, "Report all images that unused or dangling without deleting any.")
 	flags.Var(&opts.filter, "filter", "Provide filter values (e.g. 'until=<timestamp>')")
 
 	return cmd
@@ -58,12 +60,13 @@ Are you sure you want to continue?`
 func runPrune(dockerCli *command.DockerCli, opts pruneOptions) (spaceReclaimed uint64, output string, err error) {
 	pruneFilters := opts.filter.Value()
 	pruneFilters.Add("dangling", fmt.Sprintf("%v", !opts.all))
+	pruneFilters.Add("dryRun", fmt.Sprintf("%v", opts.dryRun))
 
 	warning := danglingWarning
 	if opts.all {
 		warning = allImageWarning
 	}
-	if !opts.force && !command.PromptForConfirmation(dockerCli.In(), dockerCli.Out(), warning) {
+	if !opts.force && !opts.dryRun && !command.PromptForConfirmation(dockerCli.In(), dockerCli.Out(), warning) {
 		return
 	}
 
@@ -74,6 +77,10 @@ func runPrune(dockerCli *command.DockerCli, opts pruneOptions) (spaceReclaimed u
 
 	if len(report.ImagesDeleted) > 0 {
 		output = "Deleted Images:\n"
+		if (opts.dryRun) {
+			output = "Will Delete Images:\n"
+		}
+
 		for _, st := range report.ImagesDeleted {
 			if st.Untagged != "" {
 				output += fmt.Sprintln("untagged:", st.Untagged)
@@ -89,6 +96,6 @@ func runPrune(dockerCli *command.DockerCli, opts pruneOptions) (spaceReclaimed u
 
 // RunPrune calls the Image Prune API
 // This returns the amount of space reclaimed and a detailed output string
-func RunPrune(dockerCli *command.DockerCli, all bool, filter opts.FilterOpt) (uint64, string, error) {
-	return runPrune(dockerCli, pruneOptions{force: true, all: all, filter: filter})
+func RunPrune(dockerCli *command.DockerCli, all, dryRun bool, filter opts.FilterOpt) (uint64, string, error) {
+	return runPrune(dockerCli, pruneOptions{force: true, all: all, dryRun: dryRun, filter: filter})
 }

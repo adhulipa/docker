@@ -17,6 +17,7 @@ type Store interface {
 	Create(config []byte) (ID, error)
 	Get(id ID) (*Image, error)
 	Delete(id ID) ([]layer.Metadata, error)
+	DryRunDelete(id ID) ([]layer.Metadata, error)
 	Search(partialID string) (ID, error)
 	SetParent(id ID, parent ID) error
 	GetParent(id ID) (ID, error)
@@ -29,6 +30,7 @@ type Store interface {
 type LayerGetReleaser interface {
 	Get(layer.ChainID) (layer.Layer, error)
 	Release(layer.Layer) ([]layer.Metadata, error)
+	DryRunRelease(layer.Layer) ([]layer.Metadata, error)
 }
 
 type imageMeta struct {
@@ -199,6 +201,21 @@ func (is *store) Get(id ID) (*Image, error) {
 	}
 
 	return img, nil
+}
+
+func (is *store) DryRunDelete(id ID) ([]layer.Metadata, error) {
+	is.Lock()
+	defer is.Unlock()
+
+	imageMeta := is.images[id]
+	if imageMeta == nil {
+		return nil, fmt.Errorf("unrecognized image ID %s", id.String())
+	}
+	if imageMeta.layer != nil {
+		return is.ls.DryRunRelease(imageMeta.layer)
+		//return is.ls.Release(imageMeta.layer)
+	}
+	return nil, nil
 }
 
 func (is *store) Delete(id ID) ([]layer.Metadata, error) {
