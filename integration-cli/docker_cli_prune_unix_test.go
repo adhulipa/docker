@@ -189,6 +189,24 @@ func (s *DockerSuite) TestPruneContainerLabel(c *check.C) {
 	c.Assert(strings.TrimSpace(out), checker.Not(checker.Contains), id2)
 }
 
+func (s *DockerSuite) TestPruneVolumneDryRun(c *check.C) {
+	out, _ := dockerCmd(c, "volume", "create", "--label", "foo")
+	id1 := strings.TrimSpace(out)
+	c.Assert(id1, checker.Not(checker.Equals), "")
+
+	// Add a config file of label=foobar, that will have no impact if cli is label!=foobar
+	config := `{"pruneFilters": ["label=foobar", "dryRun=true"]}`
+	d, err := ioutil.TempDir("", "integration-cli-")
+	assert.NilError(c, err)
+	defer os.RemoveAll(d)
+	err = ioutil.WriteFile(filepath.Join(d, "config.json"), []byte(config), 0644)
+	assert.NilError(c, err)
+
+	// With config.json only, prune based on label=foobar
+	out, _ = dockerCmd(c, "--config", d, "volume", "prune", "--force")
+	c.Assert(strings.TrimSpace(out), checker.Not(checker.Contains), id1)
+}
+
 func (s *DockerSuite) TestPruneVolumeLabel(c *check.C) {
 	out, _ := dockerCmd(c, "volume", "create", "--label", "foo")
 	id1 := strings.TrimSpace(out)
