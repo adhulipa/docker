@@ -170,6 +170,7 @@ func (s *VolumesService) Remove(ctx context.Context, name string, rmOpts ...opts
 var acceptedPruneFilters = map[string]bool{
 	"label":  true,
 	"label!": true,
+	"dryRun": true,
 }
 
 var acceptedListFilters = map[string]bool{
